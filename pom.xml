@@ -4,6 +4,12 @@
          xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
     <modelVersion>4.0.0</modelVersion>
 
+    <parent>
+        <groupId>org.springframework.boot</groupId>
+        <artifactId>spring-boot-starter-parent</artifactId>
+        <version>2.2.4.RELEASE</version>
+    </parent>
+
     <groupId>ru.chenko</groupId>
     <artifactId>spark-dstream</artifactId>
     <version>1.0-SNAPSHOT</version>
@@ -11,22 +17,10 @@
 
     <properties>
         <kotlin.version>1.3.50</kotlin.version>
-        <main.class>ru.chenko.MainKt</main.class>
+        <main.class>ru.chenko.spark.dstream.MainKt</main.class>
     </properties>
 
     <dependencies>
-        <dependency>
-            <groupId>org.jetbrains.kotlin</groupId>
-            <artifactId>kotlin-stdlib-jdk8</artifactId>
-            <version>${kotlin.version}</version>
-        </dependency>
-        <dependency>
-            <groupId>org.jetbrains.kotlin</groupId>
-            <artifactId>kotlin-test</artifactId>
-            <version>${kotlin.version}</version>
-            <scope>test</scope>
-        </dependency>
-
         <!-- Spark -->
         <dependency>
             <groupId>org.apache.spark</groupId>
@@ -45,13 +39,18 @@
         </dependency>
         <dependency>
             <groupId>org.apache.spark</groupId>
-            <artifactId>spark-sql-kafka-0-10_2.12</artifactId>
+            <artifactId>spark-streaming-kafka-0-10_2.12</artifactId>
             <version>2.4.4</version>
+        </dependency>
+        <dependency>
+            <groupId>org.slf4j</groupId>
+            <artifactId>slf4j-api</artifactId>
+            <version>1.7.30</version>
         </dependency>
     </dependencies>
 
     <build>
-        <sourceDirectory>src/main/kotlin</sourceDirectory>
+        <sourceDirectory>src/main/java</sourceDirectory>
         <resources>
             <resource>
                 <directory>src/main/resources</directory>
@@ -82,29 +81,6 @@
                         </configuration>
                     </execution>
                 </executions>
-            </plugin>
-
-            <plugin>
-                <groupId>org.jetbrains.kotlin</groupId>
-                <artifactId>kotlin-maven-plugin</artifactId>
-                <version>${kotlin.version}</version>
-
-                <executions>
-                    <execution>
-                        <id>compile</id>
-                        <phase>compile</phase>
-                        <goals> <goal>compile</goal> </goals>
-                    </execution>
-
-                    <execution>
-                        <id>test-compile</id>
-                        <phase>test-compile</phase>
-                        <goals> <goal>test-compile</goal> </goals>
-                    </execution>
-                </executions>
-                <configuration>
-                    <jvmTarget>11</jvmTarget>
-                </configuration>
             </plugin>
         </plugins>
     </build>
