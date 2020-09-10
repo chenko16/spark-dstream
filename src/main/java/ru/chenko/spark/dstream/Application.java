@@ -55,7 +55,7 @@ public class Application {
                 .option("subscribe", INPUT_TOPIC)
                 .option("includeHeaders", "true")
                 .option("failOnDataLoss", "false")
-                .option("startingOffsets", "earliest")
+//                .option("startingOffsets", "earliest")
                 .load();
 
         //Вычленияем из считанных из Kafka данных интересующие нас данные (избавляемся от вложенности полей)
@@ -80,7 +80,7 @@ public class Application {
 
         windowDataset.printSchema();
 
-        writeToConsole(windowDataset);
+        writeToKafka(windowDataset);
     }
 
     private static void writeToConsole(Dataset<Row> dataset) throws StreamingQueryException {
