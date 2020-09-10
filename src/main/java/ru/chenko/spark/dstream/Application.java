@@ -1,58 +1,119 @@
 package ru.chenko.spark.dstream;
 
-import org.apache.kafka.clients.consumer.ConsumerConfig;
-import org.apache.kafka.clients.consumer.ConsumerRecord;
-import org.apache.kafka.common.serialization.StringDeserializer;
 import org.apache.spark.SparkConf;
-import org.apache.spark.streaming.Durations;
-import org.apache.spark.streaming.api.java.JavaDStream;
-import org.apache.spark.streaming.api.java.JavaInputDStream;
-import org.apache.spark.streaming.api.java.JavaPairDStream;
+import org.apache.spark.sql.Dataset;
+import org.apache.spark.sql.Row;
+import org.apache.spark.sql.SparkSession;
+import org.apache.spark.sql.streaming.StreamingQueryException;
+import org.apache.spark.sql.types.DataTypes;
+import org.apache.spark.sql.types.StructType;
+import org.apache.spark.streaming.Duration;
 import org.apache.spark.streaming.api.java.JavaStreamingContext;
-import org.apache.spark.streaming.kafka010.ConsumerStrategies;
-import org.apache.spark.streaming.kafka010.KafkaUtils;
-import org.apache.spark.streaming.kafka010.LocationStrategies;
-import scala.Tuple2;
 
-import java.util.*;
+import java.util.Arrays;
+
+import static org.apache.spark.sql.functions.*;
 
 public class Application {
 
-    private static String brokers = "localhost:9092";
+    private static final String BROKERS = "localhost:9092";
 
-    private static String groupId = "spark-dstream-consumers";
+    private static final String INPUT_TOPIC= "spark";
 
-    private static String topics = "spark";
+    private static final String OUTPUT_TOPIC= "sparkResult";
 
     public static void main(String[] args) throws Exception {
+        if(args.length < 1) {
+            System.out.println("Usage: java -jar jarName byMinutesAggregate");
+            return;
+        }
+
+        Integer minutes = Integer.parseInt(args[0]);
+
         SparkConf sparkConf = new SparkConf()
                 .setAppName("Spark DStream Application")
                 .setMaster("local");
 
-        JavaStreamingContext jssc = new JavaStreamingContext(sparkConf, Durations.seconds(2));
+        JavaStreamingContext streamingContext = new JavaStreamingContext(sparkConf, new Duration(60*1000));
 
-        Set<String> topicsSet = new HashSet<>(Arrays.asList(topics.split(",")));
-        Map<String, Object> kafkaParams = new HashMap<>();
-        kafkaParams.put(ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG, brokers);
-        kafkaParams.put(ConsumerConfig.GROUP_ID_CONFIG, groupId);
-        kafkaParams.put(ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class);
-        kafkaParams.put(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class);
+        SparkSession sparkSession = SparkSession.builder()
+                .appName("Spark DStream Application")
+                .getOrCreate();
+        sparkSession.sparkContext().setLogLevel("ERROR");
 
-        // Create direct kafka stream with brokers and topics
-        JavaInputDStream<ConsumerRecord<String, String>> messages = KafkaUtils.createDirectStream(
-                jssc,
-                LocationStrategies.PreferConsistent(),
-                ConsumerStrategies.Subscribe(topicsSet, kafkaParams));
+        //Схема входных данных (метрик)
+        StructType datasetSchema = DataTypes.createStructType(Arrays.asList(
+                DataTypes.createStructField("id", DataTypes.IntegerType, false),
+                DataTypes.createStructField("time", DataTypes.TimestampType, false),
+                DataTypes.createStructField("value", DataTypes.FloatType, false)
+        ));
 
-        // Get the lines, split them into words, count the words and print
-        JavaDStream<String> lines = messages.map(ConsumerRecord::value);
-        JavaDStream<String> words = lines.flatMap(x -> Arrays.asList(" ".split(x)).iterator());
-        JavaPairDStream<String, Integer> wordCounts = words.mapToPair(s -> new Tuple2<>(s, 1))
-                .reduceByKey(Integer::sum);
-        wordCounts.print();
+        //Считываем данные из топика Kafka в датасет в режиме стрима
+        Dataset<Row> dataset = sparkSession.readStream()
+                .format("kafka")
+                .option("kafka.bootstrap.servers", BROKERS)
+                .option("subscribe", INPUT_TOPIC)
+                .option("includeHeaders", "true")
+                .option("failOnDataLoss", "false")
+                .option("startingOffsets", "earliest")
+                .load();
 
-        // Start the computation
-        jssc.start();
-        jssc.awaitTermination();
+        //Вычленияем из считанных из Kafka данных интересующие нас данные (избавляемся от вложенности полей)
+        Dataset<Row> metricDataset = dataset
+                .select(from_json(col("value").cast("string"), datasetSchema))
+                .withColumn("metric", col("jsontostructs(CAST(value AS STRING))"))
+                .drop("jsontostructs(CAST(value AS STRING))")
+                .select(col("metric.id"), col("metric.time"), col("metric.value"));
+
+        //Агрегируем данные по столбцу time и преобразуем результат к исходной структуре
+        Dataset<Row> windowDataset = metricDataset
+                .withWatermark("time", String.format("%s minutes", minutes))
+                .groupBy(col("id"), window(col("time"),String.format("%s minutes", minutes * 2), String.format("%s minutes", minutes)))
+                .agg(avg("value").as("value"))
+                .withColumn("time", col("window.start"))
+                .drop("window")
+                .select(col("id"), col("time"), col("value"));
+
+        for (String c: windowDataset.columns()) {
+            windowDataset = windowDataset.withColumn(c, windowDataset.col(c).cast(DataTypes.StringType));
+        }
+
+        windowDataset.printSchema();
+
+        writeToConsole(windowDataset);
+    }
+
+    private static void writeToConsole(Dataset<Row> dataset) throws StreamingQueryException {
+        dataset.writeStream()
+                .outputMode("complete")
+                .format("console")
+                .start()
+                .awaitTermination();
+    }
+
+    // FIXME
+    private static void writeToKafka(Dataset<Row> dataset) throws StreamingQueryException {
+        dataset
+                .writeStream()
+                .format("kafka")
+                .option("checkpointLocation", "result/checkpoint/")
+                .option("kafka.bootstrap.servers", BROKERS)
+                .option("topic", OUTPUT_TOPIC)
+                .start()
+                .awaitTermination();
+    }
+
+    // FIXME
+    private static void writeToCsv(Dataset<Row> dataset) throws StreamingQueryException {
+        dataset
+                .coalesce(1)
+                .writeStream()
+                .format("csv")
+                .option("checkpointLocation", "result/checkpoint/")
+                .option("path", "result/output/")
+                .option("format", "append")
+                .outputMode("append")
+                .start()
+                .awaitTermination();
     }
 }
