@@ -1,4 +1,4 @@
-package ru.chenko.spark.dstream;
+package ru.mephi.chenko.spark.dstream;
 
 import org.apache.spark.SparkConf;
 import org.apache.spark.sql.Dataset;
@@ -55,7 +55,6 @@ public class Application {
                 .option("subscribe", INPUT_TOPIC)
                 .option("includeHeaders", "true")
                 .option("failOnDataLoss", "false")
-//                .option("startingOffsets", "earliest")
                 .load();
 
         //Вычленияем из считанных из Kafka данных интересующие нас данные (избавляемся от вложенности полей)
@@ -74,13 +73,13 @@ public class Application {
                 .drop("window")
                 .select(col("id"), col("time"), col("value"));
 
+        // Конвертируем все колонки в строки
         for (String c: windowDataset.columns()) {
             windowDataset = windowDataset.withColumn(c, windowDataset.col(c).cast(DataTypes.StringType));
         }
 
-        windowDataset.printSchema();
-
-        writeToKafka(windowDataset);
+        // Отправляем агрегированный результат в результирующий топик kafka
+        writeToKafka(windowDataset,datasetSchema);
     }
 
     private static void writeToConsole(Dataset<Row> dataset) throws StreamingQueryException {
@@ -91,28 +90,14 @@ public class Application {
                 .awaitTermination();
     }
 
-    // FIXME
-    private static void writeToKafka(Dataset<Row> dataset) throws StreamingQueryException {
+    private static void writeToKafka(Dataset<Row> dataset, StructType datasetSchema) throws StreamingQueryException {
         dataset
+                .selectExpr("CAST(id AS STRING) AS key", "to_json(struct(*)) AS value")
                 .writeStream()
                 .format("kafka")
                 .option("checkpointLocation", "result/checkpoint/")
                 .option("kafka.bootstrap.servers", BROKERS)
                 .option("topic", OUTPUT_TOPIC)
-                .start()
-                .awaitTermination();
-    }
-
-    // FIXME
-    private static void writeToCsv(Dataset<Row> dataset) throws StreamingQueryException {
-        dataset
-                .coalesce(1)
-                .writeStream()
-                .format("csv")
-                .option("checkpointLocation", "result/checkpoint/")
-                .option("path", "result/output/")
-                .option("format", "append")
-                .outputMode("append")
                 .start()
                 .awaitTermination();
     }
