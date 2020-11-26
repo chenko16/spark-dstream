@@ -20,7 +20,7 @@ public class Application {
 
     private static final String INPUT_TOPIC= "spark";
 
-    private static final String OUTPUT_TOPIC= "sparkResult";
+    private static final String OUTPUT_TOPIC= "spark_result";
 
     public static void main(String[] args) throws Exception {
         if(args.length < 1) {
